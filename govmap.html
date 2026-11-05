@@ -37,12 +37,37 @@
   // displayGeometries ids per group, so each show() replaces only that group's geometries.
   var shown = {};
 
-  function clear(group) {
+  // GovMap's API answers over postMessage and does not keep overlapping calls apart: two
+  // displayGeometries in flight both resolve with the second one's ids. The app pushes points,
+  // shapes and the user dot in the same instant, so ids got filed under the wrong group and the
+  // next user-dot refresh cleared the project's points and boundary. One call at a time.
+  var queue = Promise.resolve();
+  var CALL_TIMEOUT_MS = 10000;
+
+  function enqueue(task) {
+    var run = queue.then(function () {
+      // A call GovMap never answers must not stall every later one behind it.
+      return Promise.race([
+        Promise.resolve().then(task),
+        new Promise(function (resolve) {
+          setTimeout(function () { console.log("govmap call timed out"); resolve(); }, CALL_TIMEOUT_MS);
+        })
+      ]);
+    });
+    queue = run.catch(function () {});
+    return run;
+  }
+
+  function clearNow(group) {
     var ids = shown[group];
     delete shown[group];
     if (ids && ids.length) {
       try { govmap.clearGeometriesById(ids); } catch (e) { fail(e); }
     }
+  }
+
+  function clear(group) {
+    enqueue(function () { clearNow(group); });
   }
 
   function show(group, data) {
@@ -51,10 +76,19 @@
     data.geometryType = type;
     data.clearExisting = false;
     data.showBubble = false;
-    govmap.displayGeometries(data).then(function (r) {
-      clear(group);
-      shown[group] = r && r.data;
-    }, fail);
+    enqueue(function () {
+      // GovMap returns its own thenable, which honours a single then(); wrap it rather than chain.
+      return new Promise(function (resolve) {
+        govmap.displayGeometries(data).then(function (r) {
+          clearNow(group);
+          shown[group] = r && r.data;
+          resolve();
+        }, function (e) {
+          fail(e);
+          resolve();
+        });
+      });
+    });
   }
 
   window.skor = {
