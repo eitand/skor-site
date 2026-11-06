@@ -13,7 +13,11 @@
   Browser testing: govmap.html#token=…  self-initialises at the default centre.
 -->
 <style>
-  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; background: #1d1d1b; }
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #1d1d1b; }
+  /* Its bottom is lifted clear of the app's capture card (skor.setInsets), which would otherwise
+     cover GovMap's logo — its attribution — and its controls. They live in GovMap's own iframe,
+     which this page can't style, so the frame itself stops short instead. */
+  #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 </style>
 </head>
 <body>
@@ -21,6 +25,9 @@
 <script>
 (function () {
   "use strict";
+
+  // createMap puts an iframe with the same id inside it; hold the container itself.
+  var mapDiv = document.getElementById("map");
 
   var bridge = window.SkorBridge || {
     onLoad: function () { console.log("onLoad"); },
@@ -92,6 +99,36 @@
     });
   }
 
+  // GovMap reports its extent only after the map moves, so a map that has just loaded has none:
+  // the app's crosshair, fit and long-press all wait on one. Work it out once from the centre and
+  // level GovMap will tell, and its fixed scale per level (read off its EXTENT_CHANGE events;
+  // its click tolerance tracks the resolution only from level 7 up, so it can't stand in). A real
+  // EXTENT_CHANGE always wins over the estimate.
+  var extentSeen = false;
+  var SCALES = [4000000, 2000000, 1000000, 500000, 250000, 150000, 70000, 35000, 15000, 8000, 4000,
+    2000, 1000, 500, 250, 125];
+  var METRES_PER_SCALE_UNIT = 0.0254 / 96; // 96 dpi
+
+  function ask(call) {
+    // One reply per call, as with displayGeometries: wrap GovMap's thenable, never chain on it.
+    return new Promise(function (resolve, reject) { call().then(resolve, reject); });
+  }
+
+  function estimateExtent() {
+    enqueue(function () {
+      var centre;
+      return ask(function () { return govmap.getCenter(); })
+        .then(function (c) { centre = c; return ask(function () { return govmap.getZoomLevel(); }); })
+        .then(function (z) {
+          var level = z && z.zoomLevel;
+          if (extentSeen || !centre || !(level in SCALES)) return;
+          var res = SCALES[level] * METRES_PER_SCALE_UNIT;
+          var hw = mapDiv.clientWidth / 2 * res, hh = mapDiv.clientHeight / 2 * res;
+          bridge.onExtent(centre[0] - hw, centre[1] - hh, centre[0] + hw, centre[1] + hh, level, res);
+        }, function (e) { console.log("extent estimate failed " + JSON.stringify(e)); });
+    });
+  }
+
   window.skor = {
     init: function (token, x, y, level, background) {
       govmap.createMap("map", {
@@ -113,10 +150,12 @@
           });
           govmap.onEvent(govmap.events.EXTENT_CHANGE).progress(function (e) {
             var x = e.extent, l = e.lod || {};
+            extentSeen = true;
             bridge.onExtent(x.xmin, x.ymin, x.xmax, x.ymax, l.level == null ? -1 : l.level,
               l.resolution == null ? -1 : l.resolution);
           });
           bridge.onLoad();
+          estimateExtent();
         }
       });
     },
@@ -124,7 +163,11 @@
     clear: clear,
     zoomTo: function (x, y, level) { govmap.zoomToXY({ x: x, y: y, level: level, marker: false }); },
     setBackground: function (id) { govmap.setBackground(id); },
-    setLayers: function (on, off) { govmap.setVisibleLayers(on, off); }
+    setLayers: function (on, off) { govmap.setVisibleLayers(on, off); },
+    setInsets: function (bottomPx, background) {
+      mapDiv.style.bottom = bottomPx + "px";
+      document.body.style.background = background;
+    }
   };
 
   window.addEventListener("error", function (e) { fail(e.message); });
