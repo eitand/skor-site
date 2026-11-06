@@ -13,10 +13,11 @@
   Browser testing: govmap.html#token=…  self-initialises at the default centre.
 -->
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #1d1d1b; }
-  /* Its bottom is lifted clear of the app's capture card (skor.setInsets), which would otherwise
-     cover GovMap's logo — its attribution — and its controls. They live in GovMap's own iframe,
-     which this page can't style, so the frame itself stops short instead. */
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1d1d1b; }
+  /* The app runs its bottom edge past the screen (skor.setInsets with a negative inset), so
+     GovMap's bottom row — a location button and its logo — is out of sight instead of peeking
+     out from under the capture card. They live in GovMap's own iframe, which this page can't
+     style, and its API has no option to hide them. */
   #map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 </style>
 </head>
@@ -164,10 +165,7 @@
     zoomTo: function (x, y, level) { govmap.zoomToXY({ x: x, y: y, level: level, marker: false }); },
     setBackground: function (id) { govmap.setBackground(id); },
     setLayers: function (on, off) { govmap.setVisibleLayers(on, off); },
-    setInsets: function (bottomPx, background) {
-      mapDiv.style.bottom = bottomPx + "px";
-      document.body.style.background = background;
-    }
+    setInsets: function (bottomPx) { mapDiv.style.bottom = bottomPx + "px"; }
   };
 
   window.addEventListener("error", function (e) { fail(e.message); });
